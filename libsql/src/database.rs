@@ -421,6 +421,17 @@ cfg_replication! {
             }
         }
 
+        /// Fixco fork: brings an embedded replica up to `replication_index` (a
+        /// write's own index) in one round trip, skipping the handshake `sync`
+        /// performs. Returns the committed frame_no.
+        pub async fn catch_up_to(&self, replication_index: FrameNo) -> Result<Option<FrameNo>> {
+            if let DbType::Sync { db, encryption_config: _ } = &self.db_type {
+                db.catch_up_to(replication_index).await
+            } else {
+                Err(Error::SyncNotSupported(format!("{:?}", self.db_type)))
+            }
+        }
+
         /// Apply a set of frames to the database and returns the committed frame_no after syncing, if
         /// applicable.
         pub async fn sync_frames(&self, frames: crate::replication::Frames) -> Result<Option<FrameNo>> {

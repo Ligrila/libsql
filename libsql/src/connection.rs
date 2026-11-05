@@ -30,6 +30,13 @@ pub(crate) trait Conn {
 
     async fn execute_transactional_batch(&self, sql: &str) -> Result<BatchRows>;
 
+    /// Fixco fork: see [`Connection::execute_transactional_steps`].
+    async fn execute_transactional_steps(&self, _steps: Vec<(String, Params)>) -> Result<Vec<u64>> {
+        Err(crate::Error::Misuse(
+            "execute_transactional_steps is not supported by this connection".into(),
+        ))
+    }
+
     async fn prepare(&self, sql: &str) -> Result<Statement>;
 
     async fn transaction(&self, tx_behavior: TransactionBehavior) -> Result<Transaction>;
@@ -71,6 +78,41 @@ pub(crate) trait Conn {
     fn add_update_hook(&self, _cb: Box<dyn Fn(Op, &str, &str, i64) + Send + Sync>) -> Result<()> {
         Err(crate::Error::UpdateHookNotSupported)
     }
+}
+
+/// Fixco fork: a step of `execute_transactional_steps` is one statement that
+/// neither opens, closes nor nests a transaction (the call owns it).
+pub(crate) fn check_transactional_step(sql: &str) -> Result<()> {
+    // SQLite ignores comments, empty statements and a byte-order mark before
+    // a keyword. Inspect the first executable token, not the first raw word:
+    // otherwise a commented COMMIT can make a later failure only partly atomic.
+    let mut statement = sql;
+    loop {
+        statement = statement.trim_start_matches(|c: char| {
+            c.is_ascii_whitespace() || c == '\u{feff}' || c == ';'
+        });
+        if let Some(comment) = statement.strip_prefix("--") {
+            statement = comment.split_once('\n').map_or("", |(_, rest)| rest);
+        } else if let Some(comment) = statement.strip_prefix("/*") {
+            statement = comment.split_once("*/").map_or("", |(_, rest)| rest);
+        } else {
+            break;
+        }
+    }
+    let first_word = statement
+        .split(|c: char| !c.is_ascii_alphabetic())
+        .next()
+        .unwrap_or("")
+        .to_ascii_uppercase();
+    if matches!(
+        first_word.as_str(),
+        "BEGIN" | "COMMIT" | "END" | "ROLLBACK" | "SAVEPOINT" | "RELEASE"
+    ) {
+        return Err(crate::Error::TransactionalBatchError(format!(
+            "a transactional step cannot control the transaction: `{first_word}`"
+        )));
+    }
+    Ok(())
 }
 
 /// A set of rows returned from `execute_batch`/`execute_transactional_batch`. It is essentially
@@ -174,6 +216,26 @@ impl Connection {
     pub async fn execute_transactional_batch(&self, sql: &str) -> Result<BatchRows> {
         tracing::trace!("executing batch transactional `{}`", sql);
         self.conn.execute_transactional_batch(sql).await
+    }
+
+    /// Fixco fork. Executes `steps` atomically in one write transaction, each
+    /// statement with its own parameters, and returns the rows each one changed.
+    ///
+    /// On an embedded replica the whole transaction is one program sent to the
+    /// primary -- one round trip, where statement-by-statement delegation costs
+    /// one per statement plus BEGIN and COMMIT. Every step runs only if the
+    /// previous one succeeded; any failure rolls the transaction back and is
+    /// returned. Must be called outside a transaction, and a step must not open,
+    /// close or nest one.
+    pub async fn execute_transactional_steps(
+        &self,
+        steps: Vec<(String, Params)>,
+    ) -> Result<Vec<u64>> {
+        for (sql, _) in &steps {
+            check_transactional_step(sql)?;
+        }
+        tracing::trace!("executing {} transactional steps", steps.len());
+        self.conn.execute_transactional_steps(steps).await
     }
 
     /// Execute sql query provided some type that implements [`IntoParams`] returning

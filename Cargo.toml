@@ -5,7 +5,6 @@ members = [
   "bindings/wasm",
   "bottomless",
   "bottomless-cli",
-  "libsql",
   "libsql-ffi",
   "libsql-hrana",
   "libsql-replication",
@@ -17,6 +16,7 @@ members = [
 ]
 
 exclude = [
+    "libsql", # The forked Rust client uses published 0.9.30 dependencies.
     "./libsql-sqlite3/ext/crr",
     "./libsql-sqlite3/ext/libsql-wasi",
     "libsql-shell",

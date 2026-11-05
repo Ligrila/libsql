@@ -13,3 +13,5 @@ libsql-sqlite3/**.o.tmp
 /bindings/c/generated
 /bindings/c/**.xcframework
 /bindings/**/.DS_Store
+/libsql/target/
+/libsql/Cargo.lock

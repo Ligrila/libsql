@@ -495,6 +495,106 @@ impl Conn for RemoteConnection {
         Ok(BatchRows::empty())
     }
 
+    async fn execute_transactional_steps(&self, steps: Vec<(String, Params)>) -> Result<Vec<u64>> {
+        // The program owns the transaction on the primary; one already open on
+        // this connection (remote or local) would be silently mixed into it.
+        if !self.is_state_init() || !self.local.is_autocommit() {
+            return Err(Error::Misuse(
+                "execute_transactional_steps must be called outside a transaction".into(),
+            ));
+        }
+
+        let positional = || {
+            Some(libsql_replication::rpc::proxy::query::Params::Positional(
+                Positional::default(),
+            ))
+        };
+        let ok = |step: i64| Cond {
+            cond: Some(libsql_replication::rpc::proxy::cond::Cond::Ok(OkCond {
+                step,
+                ..Default::default()
+            })),
+        };
+        let count = steps.len() as i64;
+
+        let mut program = Vec::with_capacity(steps.len() + 3);
+        program.push(Step {
+            query: Some(Query {
+                stmt: "BEGIN IMMEDIATE".to_string(),
+                params: positional(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        // Step i + 1 runs only if step i succeeded, so the first failure skips
+        // everything after it, COMMIT included, and ROLLBACK runs instead.
+        for (idx, (sql, params)) in steps.into_iter().enumerate() {
+            program.push(Step {
+                cond: Some(ok(idx as i64)),
+                query: Some(Query {
+                    stmt: sql,
+                    params: Some(params.into()),
+                    ..Default::default()
+                }),
+            });
+        }
+        program.push(Step {
+            cond: Some(ok(count)),
+            query: Some(Query {
+                stmt: "COMMIT".to_string(),
+                params: positional(),
+                ..Default::default()
+            }),
+        });
+        program.push(Step {
+            cond: Some(Cond {
+                cond: Some(libsql_replication::rpc::proxy::cond::Cond::Not(Box::new(
+                    NotCond {
+                        cond: Some(Box::new(ok(count + 1))),
+                    },
+                ))),
+            }),
+            query: Some(Query {
+                stmt: "ROLLBACK".to_string(),
+                params: positional(),
+                ..Default::default()
+            }),
+        });
+
+        let res = self.execute_steps_remote(program).await?;
+
+        let mut affected = Vec::with_capacity(count as usize);
+        for (idx, result) in res.results.into_iter().enumerate() {
+            match result.row_result {
+                Some(RowResult::Row(row)) => {
+                    let idx = idx as i64;
+                    if (1..=count).contains(&idx) {
+                        self.update_state(&row);
+                        affected.push(row.affected_row_count);
+                    }
+                }
+                Some(RowResult::Error(e)) => {
+                    return Err(Error::RemoteSqliteFailure(
+                        e.code,
+                        e.extended_code,
+                        e.message,
+                    ))
+                }
+                // A step skipped by its condition: ROLLBACK after a success,
+                // or what follows a failure (already returned above).
+                None => {}
+            }
+        }
+        if affected.len() as i64 != count {
+            return Err(Error::Misuse(format!(
+                "transactional steps: the primary answered {} of {count} statements",
+                affected.len()
+            )));
+        }
+
+        Ok(affected)
+    }
+
     async fn prepare(&self, sql: &str) -> Result<Statement> {
         let stmt = RemoteStatement::prepare(self.clone(), sql).await?;
 

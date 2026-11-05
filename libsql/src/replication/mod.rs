@@ -348,6 +348,46 @@ impl EmbeddedReplicator {
         Ok(replicated)
     }
 
+    /// Fixco fork: pulls frames until the replica holds `frame_no`, without the
+    /// handshake `sync_oneshot` forces to learn the primary's latest index. A
+    /// caller that just wrote already knows the index it needs (the write's
+    /// `current_frame_no`), so this costs one round trip where `sync_oneshot`
+    /// costs two. A primary that wants a handshake still gets one: the
+    /// replicator performs it when the frames request asks for it.
+    pub async fn catch_up_to(&self, frame_no: FrameNo) -> Result<Option<FrameNo>> {
+        let mut replicator = self.replicator.lock().await;
+        if !matches!(replicator.client_mut(), Either::Left(_)) {
+            return Err(crate::errors::Error::Misuse(
+                "Trying to replicate from HTTP, but this is a local replicator".into(),
+            ));
+        }
+        // A bounded loop: each pass pulls every frame the primary has, so one
+        // pass normally reaches `frame_no`. A pass that brings nothing new means
+        // the primary does not have it; stop rather than spin.
+        let mut previous = replicator.client_mut().committed_frame_no();
+        for _ in 0..8 {
+            if previous.unwrap_or(0) >= frame_no {
+                break;
+            }
+            match replicator.replicate().await {
+                Err(libsql_replication::replicator::Error::Meta(
+                    libsql_replication::meta::Error::LogIncompatible,
+                )) => replicator
+                    .replicate()
+                    .await
+                    .map_err(|e| crate::Error::Replication(e.into()))?,
+                Err(e) => return Err(crate::Error::Replication(e.into())),
+                Ok(()) => {}
+            }
+            let current = replicator.client_mut().committed_frame_no();
+            if current == previous {
+                break;
+            }
+            previous = current;
+        }
+        Ok(previous)
+    }
+
     pub async fn sync_frames(&self, frames: Frames) -> Result<Option<FrameNo>> {
         let mut replicator = self.replicator.lock().await;
 

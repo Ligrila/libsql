@@ -433,6 +433,19 @@ impl Database {
         }
     }
 
+    /// Fixco fork: see `crate::Database::catch_up_to`.
+    #[cfg(feature = "replication")]
+    pub async fn catch_up_to(&self, replication_index: FrameNo) -> Result<Option<FrameNo>> {
+        if let Some(ctx) = &self.replication_ctx {
+            ctx.replicator.catch_up_to(replication_index).await
+        } else {
+            Err(crate::errors::Error::Misuse(
+                "No replicator available. Use Database::with_replicator() to enable replication"
+                    .to_string(),
+            ))
+        }
+    }
+
     #[cfg(feature = "replication")]
     pub async fn sync_frames(&self, frames: Frames) -> Result<Option<FrameNo>> {
         if let Some(ref ctx) = self.replication_ctx {

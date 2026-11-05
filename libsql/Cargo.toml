@@ -1,10 +1,10 @@
 [package]
 name = "libsql"
-version.workspace = true
-authors.workspace = true
-edition.workspace = true
-license.workspace = true
-repository.workspace = true
+version = "0.9.30"
+authors = ["the libSQL authors"]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/Ligrila/libsql"
 description = "The libSQL database library"
 
 [dependencies]
@@ -12,8 +12,8 @@ tracing = { version = "0.1.37", default-features = false }
 thiserror = "1.0.40"
 
 futures = { version = "0.3.28", optional = true }
-libsql-sys = { workspace = true, optional = true, default-features = true }
-libsql-hrana = { workspace = true, optional = true }
+libsql-sys = { version = "0.9.30", optional = true, default-features = true }
+libsql-hrana = { version = "0.9.30", optional = true }
 tokio = { version = "1.29.1", features = ["sync"], optional = true }
 tokio-util = { version = "0.7", features = ["io-util", "codec"], optional = true }
 parking_lot = { version = "0.12.1", optional = true }
@@ -24,7 +24,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 serde_json = { version = "1", features = ["float_roundtrip"], optional = true }
 async-trait = "0.1"
 bitflags = { version = "2.4.0", optional = true }
-tower = { workspace = true, features = ["util"], optional = true }
+tower = { version = "0.4.13", features = ["util"], optional = true }
 worker = { version = "0.6.7", optional = true }
 
 bincode = { version = "1", optional = true }
@@ -38,10 +38,10 @@ tower-http = { version = "0.4.4", features = ["trace", "set-header", "util"], op
 http = { version = "0.2", optional = true }
 zerocopy = { version = "0.7.28", optional = true }
 
-sqlite3-parser = { package = "libsql-sqlite3-parser", path = "../vendored/sqlite3-parser", version = "0.13", optional = true }
+sqlite3-parser = { package = "libsql-sqlite3-parser", version = "0.13", optional = true }
 fallible-iterator = { version = "0.3", optional = true }
 
-libsql_replication = { workspace = true, optional = true }
+libsql_replication = { version = "0.9.30", optional = true }
 async-stream = { version = "0.3.5", optional = true }
 
 crc32fast = { version = "1", optional = true }
@@ -159,3 +159,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [package.metadata.cargo-udeps.ignore]
 normal = ["hyper-rustls"]
+
+# Keep the client on published dependencies instead of the monorepo siblings.
+[workspace]

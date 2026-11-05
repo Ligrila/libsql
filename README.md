@@ -1,3 +1,7 @@
+> **Ligrila Rust client fork (libSQL 0.9.30):** parameterized atomic writes and
+> catch-up to a known replication index. See [FORK.md](FORK.md) for scope, usage
+> and standalone tests. The upstream README follows below.
+
 <!-- markdownlint-disable MD033 MD041 -->
 
 <p align="center">

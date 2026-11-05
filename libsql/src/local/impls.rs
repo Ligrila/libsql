@@ -32,6 +32,30 @@ impl Conn for LibsqlConnection {
         Ok(BatchRows::empty())
     }
 
+    async fn execute_transactional_steps(&self, steps: Vec<(String, Params)>) -> Result<Vec<u64>> {
+        if !self.conn.is_autocommit() {
+            return Err(crate::Error::Misuse(
+                "execute_transactional_steps must be called outside a transaction".into(),
+            ));
+        }
+        self.conn.execute("BEGIN IMMEDIATE", Params::None)?;
+        let mut affected = Vec::with_capacity(steps.len());
+        for (sql, params) in steps {
+            match self.conn.execute(&sql, params) {
+                Ok(changed) => affected.push(changed),
+                Err(error) => {
+                    let _ = self.conn.execute("ROLLBACK", Params::None);
+                    return Err(error);
+                }
+            }
+        }
+        if let Err(error) = self.conn.execute("COMMIT", Params::None) {
+            let _ = self.conn.execute("ROLLBACK", Params::None);
+            return Err(error);
+        }
+        Ok(affected)
+    }
+
     async fn prepare(&self, sql: &str) -> Result<Statement> {
         let sql = sql.to_string();
 
